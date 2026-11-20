@@ -116,3 +116,82 @@ this sandbox's flat node_modules-less environment. Fixed by adding
 Flagging because it's exactly the kind of error `pnpm install && pnpm
 check` (DECISIONS.md's first entry) should catch immediately if anything
 similar slipped through elsewhere.
+
+## 2026-11-21 — Underage block hard-deletes immediately, not after the 7-day grace period
+
+Read spec section 17's final acceptance list and section 2's non-negotiable
+principles closely while writing the documentation files. Found a real
+gap: `auth.confirmAge` (`apps/web/server/routers/auth.ts`) blocked an
+under-18 sign-up by setting `status: "DELETED"` — the same status
+`me.deleteAccount` sets for a voluntary, cancellable 7-day deletion grace
+period. That means a minor's data (email, and whatever they'd entered
+before this step) would sit in the database for up to 7 days, which
+itself violates "Under-18 sign-ups are blocked **and their data
+deleted**" — that principle doesn't carve out a grace period.
+
+Fixed: `confirmAge` now calls `ctx.db.user.delete(...)` directly and
+immediately on an underage confirmation, after writing the audit log
+entry (`AuditLog.targetId` is a plain string, not a foreign key, so it
+safely outlives the deleted user row — same pattern the worker's
+`account.hard_deleted` logging already uses). At this point in onboarding
+(age-gate is step 1 of the wizard, before the profile step) there's
+nothing but an email/session to delete anyway.
+
+While here, extracted the age-math into a pure, exported, unit-tested
+`isAdult()` in `packages/core/src/validation/schemas.ts` (previously a
+private, untested helper duplicated inline in `auth.ts`) and a pure
+`canRevealIdentity()` in `packages/core/src/policies/policies.ts` for the
+"consent first" principle, wiring `matches.getMutualProfile` to call it
+instead of comparing `match.status !== "MUTUAL"` inline. Both non-negotiable
+principles (spec section 2) now have at least one automated test
+(`packages/core/src/validation/schemas.test.ts`,
+`packages/core/src/policies/policies.test.ts`), per the final acceptance
+list's "every non-negotiable principle... has at least one automated
+test." The remaining three non-negotiables ("only the college" already
+had tests; "safety tools everywhere" and "kind by design" describe UI
+presence/absence, which is better suited to an e2e/visual check than a
+unit test and is not yet covered — flagged in PROGRESS.md) still need
+attention before relying on this acceptance item being fully met.
+
+## 2026-11-21 — Rewrote `scripts/seed-demo.ts` to match the spec's final acceptance list exactly
+
+The original demo seed created ~24 unconnected students with no round,
+no matches, no chat, no squads, no promposals, no reports, and no
+photos — nowhere close to spec section 17's final acceptance list, which
+is explicit: 300 students across all modes, a published round, mutual
+matches with chat history, one squad chat, two promposals, three open
+reports, pending photos, and two specific sign-in-able accounts
+(`demo-student@college.edu`, `demo-organizer@college.edu`).
+
+Rewrote it to produce exactly that shape, and to do so by calling the
+*real* matching pipeline (`loadRoundInput` / `runRound` /
+`persistRoundResult` from `@prommatch/core` and `@prommatch/matcher` —
+the same functions `admin.rounds.preview`/`publish` call) rather than
+inserting fabricated match rows, so a reviewer exploring the demo data
+is exercising the actual production code path. One deliberate exception:
+`demo-student`'s own mutual match and squad membership are force-created
+if the real matcher's scoring/filters happen not to produce one for
+them — documented inline in the script — so the two fixed demo accounts'
+experience is deterministic regardless of matcher internals, while every
+other student's matches come from the unmodified real algorithm.
+
+Also added Mailpit to `infra/docker-compose.yml` (the spec's final
+acceptance list names it explicitly as where demo sign-in codes should be
+checked, at `localhost:8025`) — previously `docker-compose.yml` had no
+mail catcher at all, so `.env.example`'s `SMTP_URL` pointed nowhere
+runnable locally.
+
+Known limitation, stated in the script's own header rather than hidden:
+seeded `Photo` rows use placeholder S3 keys. This sandbox cannot generate
+or upload real binary image assets, so the rows exist (for photo-queue
+and "has approved photos" UI states) but their signed URLs 404 — there's
+no real object behind them. This is unavoidable without network/file
+access this sandbox doesn't have; a real run against a working S3 bucket
+would need actual uploaded images to look right, not just right rows.
+
+This has, like everything else in this build, never actually been run —
+flagged with the same urgency as every other unverified piece in
+PROGRESS.md. The multi-step round-then-force-then-chat-then-squad logic
+in particular is exactly the kind of thing that looks right on a careful
+re-read and still has an off-by-one or a Prisma relation name wrong; budget
+real debugging time for `pnpm seed:demo` specifically, not just `pnpm check`.

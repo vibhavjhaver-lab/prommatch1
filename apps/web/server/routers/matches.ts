@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { getEventConfig } from "../../lib/config.js";
 import { notify } from "../../lib/notify.js";
 import { getSignedPhotoUrl } from "../../lib/storage.js";
+import { canRevealIdentity } from "@prommatch/core";
 import { protectedProcedure, router } from "../trpc.js";
 
 const DecideInputSchema = z.object({
@@ -190,7 +191,7 @@ export const matchesRouter = router({
     const uid = ctx.session.user.id;
     const match = await ctx.db.match.findUniqueOrThrow({ where: { id: input.matchId } });
     if (match.userAId !== uid && match.userBId !== uid) throw new TRPCError({ code: "FORBIDDEN" });
-    if (match.status !== "MUTUAL") throw new TRPCError({ code: "FORBIDDEN", message: "not_mutual_yet" });
+    if (!canRevealIdentity(match.status)) throw new TRPCError({ code: "FORBIDDEN", message: "not_mutual_yet" });
 
     const otherUserId = uid === match.userAId ? match.userBId : match.userAId;
     const [profile, photos] = await Promise.all([

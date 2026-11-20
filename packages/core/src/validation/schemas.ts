@@ -81,3 +81,19 @@ export function isAllowedCollegeEmail(email: string, allowedDomains: string[]): 
   if (!parsed.success) return false;
   return allowedDomains.some((domain) => normalised.endsWith(`@${domain.toLowerCase()}`));
 }
+
+/**
+ * Spec section 2, non-negotiable: "Adults only: every user confirms they
+ * are 18 or older." Pure so it's unit-testable without a DB; the only
+ * caller that matters is auth.confirmAge (apps/web/server/routers/auth.ts),
+ * which — on `false` — hard-deletes the account immediately rather than
+ * scheduling it, per the same principle's "and their data deleted".
+ */
+export function isAdult(dateOfBirth: string | Date, now: Date = new Date()): boolean {
+  const birth = typeof dateOfBirth === "string" ? new Date(dateOfBirth) : dateOfBirth;
+  if (Number.isNaN(birth.getTime())) return false;
+  let age = now.getFullYear() - birth.getFullYear();
+  const monthDiff = now.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) age--;
+  return age >= 18;
+}

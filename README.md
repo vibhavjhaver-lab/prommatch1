@@ -28,16 +28,19 @@ pnpm setup              # copies .env.example → .env, installs deps, generates
 # fill in .env — see the comments in .env.example for what each var is
 docker compose -f infra/docker-compose.yml up -d   # local Postgres + Redis + MinIO
 pnpm db:migrate:dev      # creates the schema and runs prisma/seed.ts (event config + question bank)
-pnpm seed:demo           # optional: ~24 fake students with profiles/answers, dev only
+pnpm seed:demo           # 300 demo students, a published round, chats, squads, reports — dev only
 pnpm dev:all             # runs apps/web, apps/worker, apps/realtime together
 pnpm check               # lint + typecheck + test + build — run this before trusting anything
 ```
 
-Sign in at `http://localhost:3000` with any `@college.edu`-style address
-your `EventConfig.allowedEmailDomains` allows (the seeded default is
-`demo.college.edu` — see `scripts/seed-demo.ts`). Check your local mail
-catcher (e.g. [Mailpit](https://github.com/axllent/mailpit)) for the
-sign-in code.
+Sign in at `http://localhost:3000` as `demo-student@college.edu` (a
+fully populated student — existing mutual match with chat history, a
+squad with squad chat, a promposal waiting) or `demo-organizer@college.edu`
+(the admin console, with a published round, a pending photo queue, and
+3 open reports already there). The sign-in code/link lands in
+[Mailpit](https://github.com/axllent/mailpit)'s web UI at
+`http://localhost:8025` (started by `docker compose up`, matching the
+`SMTP_URL` in `.env.example`) — there's no real email sending in dev.
 
 ## Repo structure
 

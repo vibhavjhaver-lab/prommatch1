@@ -3,7 +3,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { authenticator } from "otplib";
 import QRCode from "qrcode";
-import { isAllowedCollegeEmail, hashForComparison } from "@prommatch/core";
+import { isAllowedCollegeEmail, isAdult, hashForComparison } from "@prommatch/core";
 import { getEventConfig } from "../../lib/config.js";
 import { getEnv } from "../../lib/env.js";
 import { publicProcedure, protectedProcedure, router } from "../trpc.js";
@@ -54,16 +54,21 @@ export const authRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       if (input.dateOfBirth) {
-        const age = ageFromDob(input.dateOfBirth);
-        if (age < 18) {
-          // Block and schedule deletion rather than letting the account proceed.
-          await ctx.db.user.update({
-            where: { id: ctx.session.user.id },
-            data: { status: "DELETED" },
-          });
+        if (!isAdult(input.dateOfBirth)) {
+          // Spec section 2, non-negotiable: "Under-18 sign-ups are blocked
+          // and their data deleted" — not merely scheduled for deletion.
+          // This is deliberately NOT the same path as me.deleteAccount
+          // (status=DELETED + a 7-day grace period the user can cancel):
+          // a 7-day retention window of a minor's data would itself violate
+          // this principle. Write the audit entry first (AuditLog.targetId
+          // is a plain string, not a foreign key — see schema.prisma — so
+          // it safely outlives the user row), then hard-delete immediately.
+          // At this point in onboarding (age-gate is step 1 of the wizard)
+          // the account has at most an email/session and no profile yet.
           await ctx.db.auditLog.create({
-            data: { actorId: ctx.session.user.id, action: "auth.underage_blocked", targetType: "user", targetId: ctx.session.user.id, meta: {} },
+            data: { actorId: null, action: "auth.underage_blocked_and_deleted", targetType: "user", targetId: ctx.session.user.id, meta: {} },
           });
+          await ctx.db.user.delete({ where: { id: ctx.session.user.id } });
           throw new TRPCError({ code: "FORBIDDEN", message: "underage" });
         }
       }
@@ -111,15 +116,6 @@ export const authRouter = router({
       return { ok: true };
     }),
 });
-
-function ageFromDob(dob: string): number {
-  const birth = new Date(dob);
-  const now = new Date();
-  let age = now.getFullYear() - birth.getFullYear();
-  const monthDiff = now.getMonth() - birth.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) age--;
-  return age;
-}
 
 function randomRecoveryCode(): string {
   return randomBytes(6).toString("hex").toUpperCase();

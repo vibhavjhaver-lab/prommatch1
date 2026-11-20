@@ -89,14 +89,29 @@ in DECISIONS.md, driven by the no-execution constraint:
    undone because it can't be tested here. `genderSelf` (free text)
    *is* a plain `String?` column and is a smaller candidate for the
    same treatment later.
-4. **Playwright coverage is smoke-level only** (`e2e/public-pages.spec.ts`):
+4. **Non-negotiable-principle test coverage is partial.** Spec section
+   17's final acceptance list requires every non-negotiable principle
+   from section 2 to have at least one automated test. "Only the
+   college" (`isAllowedCollegeEmail`), "adults only" (`isAdult`), and
+   "consent first" (`canRevealIdentity`) now each have unit tests in
+   `packages/core`. "Privacy by default" is enforced by what
+   `getMutualProfile` selects (gender/orientation/answers live on
+   `MatchPreferences`/`Answer`, never queried there) but has no test
+   asserting that directly. "Safety tools everywhere" (block/report/
+   unmatch reachable from every profile/match card/chat) and "kind by
+   design" (no rankings, scores, or pass counts shown to students) are
+   UI-presence/absence properties, better suited to an e2e or
+   component test than a pure unit test, and currently have **no**
+   automated coverage at all. Close this gap before treating that
+   acceptance item as met.
+5. **Playwright coverage is smoke-level only** (`e2e/public-pages.spec.ts`):
    the unauthenticated public pages and a sign-in validation check.
    Onboarding, matching, and chat flows need a seeded, signed-in
    session to test, which needs a running database — deferred to
    whoever runs this with real infrastructure. The CI workflow's
    `e2e` job is stubbed with `if: false` for the same reason; flip it
    on once there's a seed-and-run-e2e step that works in CI.
-5. **No load/performance testing of any kind.** The matcher's
+6. **No load/performance testing of any kind.** The matcher's
    complexity, the realtime server's connection handling under many
    concurrent users, and query performance at scale are all
    un-benchmarked.
@@ -131,6 +146,18 @@ All logged with full detail in DECISIONS.md; summary:
   account-deletion grace period, which would have made
   `me.cancelDeletion` unreachable from the one place a user could use
   it.
+- `auth.confirmAge`'s underage block used the same 7-day-grace
+  `status: "DELETED"` path as voluntary account deletion, which would
+  have retained a minor's data for up to a week — contradicting the
+  non-negotiable principle's "blocked and their data deleted." Now
+  hard-deletes immediately (see DECISIONS.md).
+- The original `scripts/seed-demo.ts` (~24 disconnected students, no
+  round/matches/chat/squads/promposals/reports/photos) fell far short
+  of spec section 17's final acceptance list. Rewritten to produce the
+  exact required shape via the real matching pipeline — see
+  DECISIONS.md for what changed and the one deliberate exception
+  (demo-student's own match/squad are force-created if the real
+  matcher doesn't happen to produce one).
 
 The pattern across all of these: things that are wrong in a way that
 only shows up when you actually run the code end-to-end (a route

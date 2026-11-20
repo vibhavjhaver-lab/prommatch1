@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { can, type Action, type PolicyResource, type PolicySubject, type Role } from "./policies.js";
+import { can, canRevealIdentity, type Action, type PolicyResource, type PolicySubject, type Role } from "./policies.js";
 
 const roles: Role[] = ["STUDENT", "ORGANIZER", "SUPERADMIN"];
 
@@ -100,4 +100,17 @@ describe("permissions matrix (spec section 6)", () => {
       });
     }
   }
+});
+
+describe("canRevealIdentity (spec section 2 non-negotiable: consent first)", () => {
+  it("reveals identity only when the match is MUTUAL", () => {
+    expect(canRevealIdentity("MUTUAL")).toBe(true);
+  });
+
+  it("never reveals identity for any non-mutual status, passing included", () => {
+    expect(canRevealIdentity("PROPOSED")).toBe(false);
+    expect(canRevealIdentity("DECLINED")).toBe(false);
+    expect(canRevealIdentity("EXPIRED")).toBe(false);
+    expect(canRevealIdentity("UNMATCHED")).toBe(false);
+  });
 });

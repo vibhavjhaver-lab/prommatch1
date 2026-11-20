@@ -87,3 +87,17 @@ export function assertCan(subject: PolicySubject, action: Action, resource: Poli
     throw new ForbiddenError(action);
   }
 }
+
+/**
+ * Spec section 2, non-negotiable: "Consent first: nobody learns who they
+ * matched with unless both accept. Passing is never revealed to the other
+ * person." This is the one predicate every reveal path (matches.getMutualProfile,
+ * chat access, promposal acceptance) must agree with. Deliberately a pure
+ * function of the match status alone — not of role or report context —
+ * so it can't accidentally be loosened by adding an unrelated allow-list
+ * elsewhere the way `can()`'s per-action table could be.
+ */
+export type RevealGateMatchStatus = "PROPOSED" | "MUTUAL" | "DECLINED" | "EXPIRED" | "UNMATCHED";
+export function canRevealIdentity(status: RevealGateMatchStatus): boolean {
+  return status === "MUTUAL";
+}
