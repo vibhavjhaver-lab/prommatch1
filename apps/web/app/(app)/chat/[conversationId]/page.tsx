@@ -3,27 +3,33 @@
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { trpc } from "../../../../lib/trpc.js";
+import { useConversationSocket } from "../../../../lib/useConversationSocket.js";
 import { PillButton } from "../../../../components/ui.js";
 
 /**
- * Polls for new messages every few seconds. apps/realtime (Socket.IO) is
- * the live-push path once it exists — this page is written against the
- * same tRPC procedures it would otherwise just be prodded by, so swapping
- * in a socket subscription later only means replacing the refetchInterval
- * with a socket listener that calls the same query invalidation.
+ * Live updates come from apps/realtime over Socket.IO when it's reachable;
+ * the 15s refetchInterval is just a safety net for when it isn't (or for
+ * events this client missed while reconnecting), so the chat never fully
+ * depends on the socket being up.
  */
 export default function ChatRoomPage() {
   const params = useParams<{ conversationId: string }>();
   const conversationId = params.conversationId;
   const [body, setBody] = useState("");
 
-  const history = trpc.chat.history.useQuery({ conversationId }, { refetchInterval: 4000 });
+  const history = trpc.chat.history.useQuery({ conversationId }, { refetchInterval: 15000 });
   const utils = trpc.useUtils();
   const send = trpc.chat.send.useMutation({
     onSuccess: () => {
       setBody("");
       utils.chat.history.invalidate({ conversationId });
     },
+  });
+
+  useConversationSocket(conversationId, (payload) => {
+    if (payload.event === "message:new" || payload.event === "read") {
+      utils.chat.history.invalidate({ conversationId });
+    }
   });
 
   return (
