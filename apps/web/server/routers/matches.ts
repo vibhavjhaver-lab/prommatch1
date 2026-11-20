@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { getEventConfig } from "../../lib/config.js";
 import { notify } from "../../lib/notify.js";
+import { getSignedPhotoUrl } from "../../lib/storage.js";
 import { protectedProcedure, router } from "../trpc.js";
 
 const DecideInputSchema = z.object({
@@ -182,6 +183,25 @@ export const matchesRouter = router({
     });
 
     return { ok: true };
+  }),
+
+  /** Only once MUTUAL: the one place a student's full profile is revealed to a specific other student. */
+  getMutualProfile: protectedProcedure.input(z.object({ matchId: z.string() })).query(async ({ ctx, input }) => {
+    const uid = ctx.session.user.id;
+    const match = await ctx.db.match.findUniqueOrThrow({ where: { id: input.matchId } });
+    if (match.userAId !== uid && match.userBId !== uid) throw new TRPCError({ code: "FORBIDDEN" });
+    if (match.status !== "MUTUAL") throw new TRPCError({ code: "FORBIDDEN", message: "not_mutual_yet" });
+
+    const otherUserId = uid === match.userAId ? match.userBId : match.userAId;
+    const [profile, photos] = await Promise.all([
+      ctx.db.profile.findUnique({ where: { userId: otherUserId } }),
+      ctx.db.photo.findMany({ where: { userId: otherUserId, status: "APPROVED" }, orderBy: { order: "asc" } }),
+    ]);
+    const photosWithUrls = await Promise.all(
+      photos.map(async (p) => ({ ...p, signedUrl: await getSignedPhotoUrl(p.key) })),
+    );
+
+    return { otherUserId, profile, photos: photosWithUrls };
   }),
 });
 

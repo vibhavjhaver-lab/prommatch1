@@ -24,3 +24,12 @@ h3 {
   outline: 2px solid var(--gold);
   outline-offset: 2px;
 }
+
+/* Shared form-control look, used via className="input" across onboarding,
+   settings, and admin forms — kept here instead of repeating the same
+   Tailwind utility string on every <input>/<select>/<textarea>. */
+@layer components {
+  .input {
+    @apply w-full rounded-card border border-text/20 bg-bg px-3 py-2 text-text;
+  }
+}

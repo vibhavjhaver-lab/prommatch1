@@ -57,3 +57,49 @@ to validate it is accurate rather than itself offensive or incomplete.
 `packages/core/moderation/blocklist.ts` is structured so organizers (or a
 future session, with the person reviewing) can paste in a fuller list; the
 file documents the expected shape.
+
+## 2026-11-20 — Sign-in code is the raw magic-link token, not a slice of it
+
+Section 6 calls for a magic link + a 6-digit code as two ways to complete
+the same sign-in. The first draft of `apps/web/lib/auth.ts` sent
+`token.slice(0, 6)` as the displayed "code" while letting Auth.js's
+EmailProvider generate its own long default token for the link. That
+doesn't work: Auth.js verifies a presented token by hashing it and
+comparing to the stored hash, so a 6-character slice of the real token can
+never itself hash-match — the "code" would always fail if a user actually
+typed it back in.
+
+Fix: `generateVerificationToken` is overridden so the **entire raw
+token is an 8-character code** (33-symbol alphabet, `0/O/1/I` excluded),
+used verbatim as both the `?token=` query param in the magic link and the
+code shown in the email. Typing the code now works because it's exactly
+the value Auth.js hashes and checks either way. This trades some entropy
+(~40 bits per token) for human-typability; single-use tokens, a 15-minute
+expiry, and the send-rate limits in `auth.requestCode` (5/email/hour,
+20/IP/hour) keep that an acceptable tradeoff for a prom app, not something
+guarding financial or medical data.
+
+## 2026-11-20 — `MatchPreferences.gender` is stored in plaintext, not encrypted
+
+`packages/db/prisma/schema.prisma` marks `gender` and `genderSelf` as
+`// ENC` (intended for application-level AES-256-GCM encryption via
+`@prommatch/core`'s `encryptField`, the same way excluded-email hashes are
+handled). In practice `gender` is a native Postgres enum column
+(`Gender`), and `apps/web/server/routers/prefs.ts`'s `update` procedure
+writes `input.gender` straight through, unencrypted.
+
+This isn't an oversight introduced now — a native enum column cannot
+physically hold ciphertext (AES-GCM output isn't a valid enum member), so
+encrypting this field would require first migrating it to an encrypted
+`String` column, which ripples into `packages/matcher`'s `GenderKey`
+types, `loadRoundInput`'s Prisma queries/filters, and every UI select that
+reads/writes gender. That's a real schema migration, and this agent has no
+network access to run or test one in this sandbox.
+
+Left as-is for now: `gender` is treated as regular (not field-encrypted)
+personal data, same tier as `displayName` or `department` — it's never
+shown to other students except on a mutual Date match (per the privacy
+notice), just not additionally encrypted at rest. `genderSelf` (the free-text
+self-description) is a `String?` column already, so encrypting *that* one
+field is a smaller, lower-risk follow-up if you want partial coverage
+before tackling the enum migration.

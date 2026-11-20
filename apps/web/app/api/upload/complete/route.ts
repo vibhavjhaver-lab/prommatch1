@@ -24,9 +24,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  // Raw keys are namespaced per-user at presign time (uploads/<userId>/raw/...);
-  // reject anything that doesn't belong to the caller.
-  if (!parsed.data.rawKey.startsWith(`uploads/${session.user.id}/raw/`)) {
+  // Raw keys are namespaced per-user at presign time (uploads/<userId>/<uuid>,
+  // see lib/storage.ts's getUploadUrl); reject anything that doesn't belong
+  // to the caller so one student can't confirm/consume another's upload.
+  if (!parsed.data.rawKey.startsWith(`uploads/${session.user.id}/`)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
