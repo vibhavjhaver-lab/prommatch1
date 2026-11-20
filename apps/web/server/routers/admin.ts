@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { EventConfigSchema } from "@prommatch/config";
-import { loadRoundInput, persistRoundResult, writeAudit } from "@prommatch/core";
+import { enqueue, loadRoundInput, persistRoundResult, writeAudit } from "@prommatch/core";
 import { runRound } from "@prommatch/matcher";
 import { getEventConfig, updateEventConfig } from "../../lib/config.js";
 import { getEnv } from "../../lib/env.js";
+import { notify } from "../../lib/notify.js";
 import { getSignedPhotoUrl } from "../../lib/storage.js";
 import { organizerProcedure, requirePolicy, router, superadminProcedure } from "../trpc.js";
 
@@ -178,11 +179,48 @@ const roundsRouter = router({
       { emailHashSalt: env.EMAIL_HASH_SALT },
     );
     const output = runRound(roundInput, round.seed);
-    await persistRoundResult(ctx.db, round.id, round.mode, output);
+    const persisted = await persistRoundResult(ctx.db, round.id, round.mode, output);
     await ctx.db.matchRound.update({ where: { id: round.id }, data: { status: "PUBLISHED", publishedAt: new Date() } });
     await writeAudit(ctx.db, { actorId: ctx.session.user.id, action: "round.published", targetType: "MatchRound", targetId: round.id });
 
-    return { ok: true, stats: output.stats };
+    // Tell every student who got a new proposal/squad in this drop. Done
+    // here (not fanned out to a worker job) because the round-publish
+    // button is already an infrequent, organizer-initiated action, not a
+    // high-QPS path — a few hundred `notify()` calls is fine inline.
+    const affectedUserIds = new Set<string>();
+    if (round.mode !== "SQUAD") {
+      const matches = await ctx.db.match.findMany({
+        where: { id: { in: persisted.matchIds } },
+        select: { userAId: true, userBId: true },
+      });
+      for (const m of matches) {
+        affectedUserIds.add(m.userAId);
+        affectedUserIds.add(m.userBId);
+      }
+    } else {
+      const members = await ctx.db.squadMember.findMany({
+        where: { squadId: { in: persisted.squadIds } },
+        select: { userId: true },
+      });
+      for (const m of members) affectedUserIds.add(m.userId);
+    }
+
+    await Promise.all(
+      [...affectedUserIds].map((userId) =>
+        notify({
+          userId,
+          type: "round:published",
+          title: "Your Match Drop is here",
+          body:
+            round.mode === "SQUAD"
+              ? "You've been placed in a squad — go take a look."
+              : `New ${round.mode === "DATE" ? "date" : "friend"} matches are ready for you.`,
+          link: round.mode === "SQUAD" ? "/squad" : `/matches?mode=${round.mode}`,
+        }),
+      ),
+    );
+
+    return { ok: true, stats: output.stats, notified: affectedUserIds.size };
   }),
 
   close: organizerProcedure.input(z.object({ roundId: z.string() })).mutation(async ({ ctx, input }) => {
@@ -333,20 +371,43 @@ const dataRouter = router({
 
   exportFull: superadminProcedure.mutation(async ({ ctx }) => {
     await writeAudit(ctx.db, { actorId: ctx.session.user.id, action: "data.full_export_requested", targetType: "Event" });
+    const env = getEnv();
     // Actual file generation happens in apps/worker (data.export job),
-    // writing a zip to object storage and emailing a signed link.
+    // which writes a zip to object storage and emails the requester a
+    // signed link — see apps/worker/src/jobs/dataExport.ts.
+    await enqueue(env.REDIS_URL, "data.export", { userId: ctx.session.user.id });
     return { ok: true, note: "Export is being generated and will be emailed to you." };
   }),
 
   wipeEvent: superadminProcedure
     .input(z.object({ confirmationPhrase: z.literal("DELETE ALL EVENT DATA") }))
     .mutation(async ({ ctx }) => {
-      await writeAudit(ctx.db, { actorId: ctx.session.user.id, action: "data.wipe_requested", targetType: "Event" });
-      // A 48-hour countdown job (data.retentionWipe) performs the actual
-      // deletion so any superadmin has a window to cancel — see
-      // apps/worker/src/jobs/retention.ts.
-      return { ok: true, scheduledFor: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() };
+      const at = new Date(Date.now() + 48 * 60 * 60 * 1000);
+      await ctx.db.eventConfig.upsert({
+        where: { key: "scheduledWipe" },
+        create: { key: "scheduledWipe", value: { at: at.toISOString(), requestedBy: ctx.session.user.id } },
+        update: { value: { at: at.toISOString(), requestedBy: ctx.session.user.id } },
+      });
+      await writeAudit(ctx.db, { actorId: ctx.session.user.id, action: "data.wipe_requested", targetType: "Event", meta: { at: at.toISOString() } });
+      // data.retentionWipe (apps/worker, run on the cron.tick schedule)
+      // checks this "scheduledWipe" EventConfig row every tick and only
+      // performs the deletion once `at` has passed — any superadmin can
+      // call cancelWipe below before then.
+      return { ok: true, scheduledFor: at.toISOString() };
     }),
+
+  cancelWipe: superadminProcedure.mutation(async ({ ctx }) => {
+    const existing = await ctx.db.eventConfig.findUnique({ where: { key: "scheduledWipe" } });
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "no_wipe_scheduled" });
+    await ctx.db.eventConfig.delete({ where: { key: "scheduledWipe" } });
+    await writeAudit(ctx.db, { actorId: ctx.session.user.id, action: "data.wipe_cancelled", targetType: "Event" });
+    return { ok: true };
+  }),
+
+  wipeStatus: superadminProcedure.query(async ({ ctx }) => {
+    const existing = await ctx.db.eventConfig.findUnique({ where: { key: "scheduledWipe" } });
+    return existing ? (existing.value as { at: string; requestedBy: string }) : null;
+  }),
 });
 
 const organizersRouter = router({

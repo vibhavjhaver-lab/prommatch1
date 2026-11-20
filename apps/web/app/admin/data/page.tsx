@@ -10,7 +10,10 @@ export default function DataPage() {
   const isSuperadmin = session?.user?.role === "SUPERADMIN";
   const aggregate = trpc.admin.data.exportAggregate.useQuery();
   const exportFull = trpc.admin.data.exportFull.useMutation();
-  const wipe = trpc.admin.data.wipeEvent.useMutation();
+  const utils = trpc.useUtils();
+  const wipeStatus = trpc.admin.data.wipeStatus.useQuery(undefined, { enabled: isSuperadmin });
+  const wipe = trpc.admin.data.wipeEvent.useMutation({ onSuccess: () => utils.admin.data.wipeStatus.invalidate() });
+  const cancelWipe = trpc.admin.data.cancelWipe.useMutation({ onSuccess: () => utils.admin.data.wipeStatus.invalidate() });
   const [confirmPhrase, setConfirmPhrase] = useState("");
   const [confirming, setConfirming] = useState(false);
 
@@ -45,39 +48,50 @@ export default function DataPage() {
 
           <Card className="border-danger/40">
             <SectionHeading>Wipe event data</SectionHeading>
-            <p className="text-sm text-muted mb-3">
-              Permanently deletes all event data after a 48-hour window during which any superadmin can cancel. Type{" "}
-              <code>DELETE ALL EVENT DATA</code> to confirm.
-            </p>
-            {confirming ? (
+            {wipeStatus.data ? (
               <div className="space-y-3">
-                <input
-                  value={confirmPhrase}
-                  onChange={(e) => setConfirmPhrase(e.target.value)}
-                  className="input"
-                  placeholder="DELETE ALL EVENT DATA"
-                />
-                <div className="flex gap-3">
-                  <PillButton variant="secondary" onClick={() => setConfirming(false)}>
-                    Cancel
-                  </PillButton>
-                  <PillButton
-                    variant="danger"
-                    disabled={confirmPhrase !== "DELETE ALL EVENT DATA" || wipe.isPending}
-                    onClick={() => wipe.mutate({ confirmationPhrase: "DELETE ALL EVENT DATA" })}
-                  >
-                    Confirm wipe
-                  </PillButton>
-                </div>
+                <p className="text-sm text-danger">
+                  A wipe is scheduled for {new Date(wipeStatus.data.at).toLocaleString()}. Everything — students,
+                  matches, chats, reports — will be permanently deleted at that time unless cancelled.
+                </p>
+                <PillButton variant="secondary" onClick={() => cancelWipe.mutate()} disabled={cancelWipe.isPending}>
+                  Cancel scheduled wipe
+                </PillButton>
               </div>
             ) : (
-              <PillButton variant="danger" onClick={() => setConfirming(true)}>
-                Wipe event data
-              </PillButton>
+              <>
+                <p className="text-sm text-muted mb-3">
+                  Permanently deletes all event data after a 48-hour window during which any superadmin can cancel.
+                  Type <code>DELETE ALL EVENT DATA</code> to confirm.
+                </p>
+                {confirming ? (
+                  <div className="space-y-3">
+                    <input
+                      value={confirmPhrase}
+                      onChange={(e) => setConfirmPhrase(e.target.value)}
+                      className="input"
+                      placeholder="DELETE ALL EVENT DATA"
+                    />
+                    <div className="flex gap-3">
+                      <PillButton variant="secondary" onClick={() => setConfirming(false)}>
+                        Cancel
+                      </PillButton>
+                      <PillButton
+                        variant="danger"
+                        disabled={confirmPhrase !== "DELETE ALL EVENT DATA" || wipe.isPending}
+                        onClick={() => wipe.mutate({ confirmationPhrase: "DELETE ALL EVENT DATA" })}
+                      >
+                        Confirm wipe
+                      </PillButton>
+                    </div>
+                  </div>
+                ) : (
+                  <PillButton variant="danger" onClick={() => setConfirming(true)}>
+                    Wipe event data
+                  </PillButton>
+                )}
+              </>
             )}
-            {wipe.data ? (
-              <p className="text-xs text-muted mt-3">Scheduled for {new Date(wipe.data.scheduledFor).toLocaleString()}.</p>
-            ) : null}
           </Card>
         </>
       ) : null}

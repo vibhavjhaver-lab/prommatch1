@@ -103,3 +103,16 @@ notice), just not additionally encrypted at rest. `genderSelf` (the free-text
 self-description) is a `String?` column already, so encrypting *that* one
 field is a smaller, lower-risk follow-up if you want partial coverage
 before tackling the enum migration.
+
+## 2026-11-20 — Missed workspace dependency: `@prommatch/emails` → `@prommatch/ui-tokens`
+
+Every template in `packages/emails/src/templates/*.tsx` imports `tokens`
+from `@prommatch/ui-tokens` (for colors inlined into email HTML), but
+`packages/emails/package.json` never listed it as a dependency. Under
+pnpm's strict workspace isolation this would fail to resolve at
+build/typecheck time even though it happened to be importable from inside
+this sandbox's flat node_modules-less environment. Fixed by adding
+`"@prommatch/ui-tokens": "workspace:*"` to `packages/emails/package.json`.
+Flagging because it's exactly the kind of error `pnpm install && pnpm
+check` (DECISIONS.md's first entry) should catch immediately if anything
+similar slipped through elsewhere.
