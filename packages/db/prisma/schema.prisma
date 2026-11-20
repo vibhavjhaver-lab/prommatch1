@@ -1,0 +1,460 @@
+// PromMatch data model — see spec section 5.
+// Sensitive fields marked ENC in comments are encrypted at the application
+// layer (packages/core/crypto) before being written here; Prisma just sees
+// opaque strings/bytes for those fields.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum Role {
+  STUDENT
+  ORGANIZER
+  SUPERADMIN
+}
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ONBOARDING
+  ACTIVE
+  PAUSED
+  SUSPENDED
+  BANNED
+  DELETED
+}
+
+enum Mode {
+  DATE
+  FRIEND
+  SQUAD
+}
+
+enum Gender {
+  WOMAN
+  MAN
+  NONBINARY
+  SELF_DESCRIBE
+  PREFER_NOT
+}
+
+enum DecisionKind {
+  PENDING
+  ACCEPT
+  PASS
+  EXPIRED
+}
+
+enum MatchStatus {
+  PROPOSED
+  MUTUAL
+  DECLINED
+  EXPIRED
+  UNMATCHED
+}
+
+enum RoundStatus {
+  DRAFT
+  PREVIEWED
+  PUBLISHED
+  CLOSED
+}
+
+enum ReportStatus {
+  OPEN
+  IN_REVIEW
+  ACTIONED
+  DISMISSED
+}
+
+enum PhotoStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ---------- Auth.js models ----------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------- Core ----------
+
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique // lower-cased, college domain only
+  role           Role          @default(STUDENT)
+  status         AccountStatus @default(PENDING_VERIFICATION)
+  ageConfirmedAt DateTime?
+  termsVersion   String?
+  lastActiveAt   DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  profile        Profile?
+  prefs          MatchPreferences?
+  answers        Answer[]
+  photos         Photo[]
+  accounts       Account[]
+  sessions       Session[]
+  blocksMade     Block[]            @relation("blocker")
+  blocksReceived Block[]            @relation("blocked")
+  reportsMade    Report[]           @relation("reporter")
+  reportsAgainst Report[]           @relation("reported")
+  notifications  Notification[]
+  pushSubs       PushSubscription[]
+  feedback       Feedback[]
+  squadMembers   SquadMember[]
+  sentMessages   Message[]
+  totpSecret     String? // ENC, organizer/superadmin only
+  totpRecovery   String[] // ENC, hashed recovery codes
+}
+
+model Profile {
+  userId      String @id
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String // first name or nickname, 2-24 chars
+  pronouns    String?
+  yearOfStudy Int // 1-5
+  department  String // from config list
+  bio         String? // max 300 chars, moderated
+  prompts     Json // 3 of the prompt answers, max 150 chars each
+  interests   String[] // 3-10 tags from config list
+  promVibe    String // one of config.promVibes
+  heightCm    Int? // optional, never required
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MatchPreferences {
+  userId          String   @id
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modes           Mode[]
+  gender          Gender // ENC
+  genderSelf      String? // ENC
+  seekingGenders  Gender[] // ENC, DATE mode only
+  yearMin         Int
+  yearMax         Int
+  sameDeptOk      Boolean  @default(true)
+  squadSizeMin    Int      @default(4)
+  squadSizeMax    Int      @default(8)
+  squadFriendCode String? // join a squad with known friends
+  dealbreakers    Json // question ids + disallowed answers, max 3
+  excludedEmails  String[] // ENC, hashed: never match me with these people
+  weightAdjust    Json? // per-section multiplier learned from pass/accept reasons
+  paused          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Question {
+  id            String   @id @default(cuid())
+  key           String   @unique
+  section       String
+  text          String
+  type          String
+  options       Json
+  weightDefault Float
+  complementary Boolean  @default(false)
+  modes         Mode[]
+  order         Int
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  answers Answer[]
+}
+
+model Answer {
+  id         String   @id @default(cuid())
+  userId     String
+  questionId String
+  value      Json
+  importance Int // 0-3
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+}
+
+model Photo {
+  id            String      @id @default(cuid())
+  userId        String
+  key           String
+  thumbKey      String
+  order         Int
+  status        PhotoStatus @default(PENDING)
+  reviewedById  String?
+  rejectReason  String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------- Matching ----------
+
+model MatchRound {
+  id               String      @id @default(cuid())
+  number           Int
+  mode             Mode
+  status           RoundStatus @default(DRAFT)
+  seed             Int
+  params           Json // weights and thresholds used
+  scheduledAt      DateTime
+  publishedAt      DateTime?
+  decisionDeadline DateTime
+  stats            Json? // eligible, matched, mean score, unmatched reasons
+  createdById      String
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  matches Match[]
+  squads  Squad[]
+
+  @@unique([number, mode])
+}
+
+model Match {
+  id           String       @id @default(cuid())
+  roundId      String
+  mode         Mode // DATE or FRIEND
+  userAId      String // always the lexicographically smaller id
+  userBId      String
+  score        Float // 0-100
+  reasons      Json // top 3 shared answers / interests, human-readable
+  decisionA    DecisionKind @default(PENDING)
+  decisionB    DecisionKind @default(PENDING)
+  status       MatchStatus  @default(PROPOSED)
+  mutualAt     DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  round        MatchRound    @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  conversation Conversation?
+  promposal    Promposal?
+
+  @@unique([roundId, userAId, userBId])
+}
+
+model Squad {
+  id        String   @id @default(cuid())
+  roundId   String
+  name      String
+  score     Float
+  status    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  round        MatchRound    @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  members      SquadMember[]
+  conversation Conversation?
+}
+
+model SquadMember {
+  id       String       @id @default(cuid())
+  squadId  String
+  userId   String
+  decision DecisionKind @default(PENDING)
+
+  squad Squad @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([squadId, userId])
+}
+
+// outcome: "history" | "blocked" | "expired" — never re-propose a pair once logged here
+model PairHistory {
+  id        String   @id @default(cuid())
+  userAId   String
+  userBId   String
+  mode      Mode
+  outcome   String
+  createdAt DateTime @default(now())
+
+  @@unique([userAId, userBId, mode])
+}
+
+// ---------- Conversation ----------
+
+model Conversation {
+  id        String    @id @default(cuid())
+  matchId   String?   @unique
+  squadId   String?   @unique
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+
+  match    Match?    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  squad    Squad?    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String
+  kind           String   @default("text")
+  flagged        Boolean  @default(false)
+  deletedAt      DateTime?
+  readBy         String[]
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+model Promposal {
+  id           String    @id @default(cuid())
+  matchId      String    @unique
+  fromId       String
+  template     String
+  message      String
+  status       String // SENT | YES | NOT_YET
+  respondedAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+}
+
+// ---------- Safety ----------
+
+model Block {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  blocker User @relation("blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+}
+
+model Report {
+  id          String       @id @default(cuid())
+  reporterId  String
+  reportedId  String
+  context     String
+  contextId   String?
+  category    String
+  details     String
+  status      ReportStatus @default(OPEN)
+  handledById String?
+  resolution  String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  reporter User @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported User @relation("reported", fields: [reportedId], references: [id], onDelete: Cascade)
+}
+
+// ---------- Comms ----------
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  keys      Json
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Announcement {
+  id          String    @id @default(cuid())
+  title       String
+  body        String
+  audience    String
+  publishAt   DateTime
+  sentAt      DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+}
+
+// ---------- Platform ----------
+
+model EventConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String?
+  meta       Json
+  createdAt  DateTime @default(now())
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String
+  matchId   String?
+  rating    Int
+  tags      String[]
+  comment   String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
