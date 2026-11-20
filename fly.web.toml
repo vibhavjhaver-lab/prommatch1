@@ -1,0 +1,29 @@
+# flyctl deploy --config fly.web.toml --dockerfile infra/Dockerfile.web
+# Run from the repo root so the Docker build context includes the whole
+# workspace. Fly's managed Postgres/Redis (`fly postgres create`,
+# `fly redis create`) give you the DATABASE_URL/REDIS_URL to set below.
+app = "prommatch-web"
+primary_region = "iad"
+
+[build]
+  dockerfile = "infra/Dockerfile.web"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "15s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+# Secrets (not stored here — set with `fly secrets set KEY=value -a prommatch-web`):
+# DATABASE_URL, REDIS_URL, AUTH_SECRET, REALTIME_JWT_SECRET, CRON_SECRET,
+# FIELD_ENCRYPTION_KEY, EMAIL_HASH_SALT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY,
+# S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, SMTP_URL, EMAIL_FROM,
+# APP_URL, REALTIME_URL

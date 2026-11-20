@@ -1,0 +1,72 @@
+version: "3.9"
+
+# Local development dependencies only — apps/web, apps/worker, and
+# apps/realtime run with `pnpm dev:*` on the host (not containerized
+# here), connecting to these via the DATABASE_URL/REDIS_URL/S3_* in your
+# .env (see .env.example). Postgres and MinIO data persist in
+# ./pgdata and ./minio-data respectively (both .gitignored).
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prommatch
+      POSTGRES_PASSWORD: prommatch
+      POSTGRES_DB: prommatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prommatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: prommatch
+      MINIO_ROOT_PASSWORD: prommatch123
+    ports:
+      - "9000:9000" # S3 API — point S3_ENDPOINT=http://localhost:9000 at this
+      - "9001:9001" # Web console — http://localhost:9001, log in with the credentials above
+    volumes:
+      - ./minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: creates the `prommatch` bucket on first run. Re-running is
+  # harmless (mb --ignore-existing). `docker compose up createbuckets`
+  # or just let it run as part of `docker compose up`.
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 prommatch prommatch123 &&
+      mc mb --ignore-existing local/prommatch
+      "
+    # Deliberately NOT setting `mc anonymous set download` — photos and
+    # export zips are only ever meant to be reached through the signed,
+    # time-limited URLs lib/storage.ts generates (getSignedPhotoUrl,
+    # uploadExportAndSign). A public bucket would let anyone with a key
+    # (which show up in plenty of places — HTML, logs) bypass that.

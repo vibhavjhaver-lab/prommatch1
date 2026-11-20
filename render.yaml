@@ -1,0 +1,133 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: connect this repo in the Render dashboard and it picks this up
+# automatically ("New +" → "Blueprint"). Fill in the `sync: false` env
+# vars in the dashboard after the first deploy (see .env.example for what
+# each one is). Render provisions managed Postgres and Redis for you here
+# — MinIO is local-dev only; in production point S3_* at a real bucket
+# (Cloudflare R2, AWS S3, Backblaze B2, all speak the same S3 API).
+services:
+  - type: web
+    name: prommatch-web
+    runtime: docker
+    dockerfilePath: ./infra/Dockerfile.web
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: prommatch-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { name: prommatch-redis, type: redis, property: connectionString }
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: REALTIME_JWT_SECRET
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      - key: FIELD_ENCRYPTION_KEY
+        generateValue: true
+      - key: EMAIL_HASH_SALT
+        generateValue: true
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: SMTP_URL
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: REALTIME_URL
+        sync: false
+
+  - type: worker
+    name: prommatch-worker
+    runtime: docker
+    dockerfilePath: ./infra/Dockerfile.worker
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: prommatch-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { name: prommatch-redis, type: redis, property: connectionString }
+      - key: NODE_ENV
+        value: production
+      - key: EMAIL_HASH_SALT
+        sync: false # must match apps/web's value exactly — copy it over, don't regenerate
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_CONTACT_EMAIL
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: SMTP_URL
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_URL
+        sync: false
+
+  - type: web
+    name: prommatch-realtime
+    runtime: docker
+    dockerfilePath: ./infra/Dockerfile.realtime
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: prommatch-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { name: prommatch-redis, type: redis, property: connectionString }
+      - key: NODE_ENV
+        value: production
+      - key: REALTIME_JWT_SECRET
+        sync: false # must match apps/web's value exactly — copy it over, don't regenerate
+      - key: REALTIME_PORT
+        value: "4000"
+      - key: REALTIME_CORS_ORIGINS
+        sync: false # the deployed prommatch-web origin, e.g. https://prommatch-web.onrender.com
+
+  - type: cron
+    name: prommatch-cron-tick
+    runtime: docker
+    dockerfilePath: ./infra/Dockerfile.web
+    dockerContext: .
+    schedule: "*/5 * * * *"
+    dockerCommand: >
+      sh -c "curl -sf -X POST -H \"x-cron-secret: $CRON_SECRET\" \"$APP_URL/api/cron/tick\""
+    envVars:
+      - key: CRON_SECRET
+        sync: false # must match apps/web's value exactly — copy it over, don't regenerate
+      - key: APP_URL
+        sync: false
+
+databases:
+  - name: prommatch-db
+    plan: starter
+    postgresMajorVersion: "16"
+
+# Render's managed Redis is declared as its own service via the Redis
+# add-on in the dashboard (Blueprints don't yet support a top-level
+# `redis:` key the way they do `databases:`) — create "prommatch-redis"
+# there once, and the `fromService` references above will resolve.

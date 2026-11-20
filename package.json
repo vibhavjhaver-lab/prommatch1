@@ -21,11 +21,18 @@
     "check": "turbo run lint typecheck test build",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "restore:check": "tsx scripts/restore-check.ts",
     "db:migrate": "pnpm --filter @prommatch/db exec prisma migrate deploy",
     "db:migrate:dev": "pnpm --filter @prommatch/db exec prisma migrate dev",
     "db:studio": "pnpm --filter @prommatch/db exec prisma studio",
     "db:generate": "pnpm --filter @prommatch/db exec prisma generate",
     "generate:secrets": "tsx scripts/generate-secrets.ts"
+  },
+  "dependencies": {
+    "@prommatch/config": "workspace:*",
+    "@prommatch/core": "workspace:*",
+    "@prommatch/db": "workspace:*",
+    "ioredis": "^5.4.1"
   },
   "devDependencies": {
     "turbo": "^2.1.0",

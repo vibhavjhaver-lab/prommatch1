@@ -1,0 +1,16 @@
+# flyctl deploy --config fly.worker.toml --dockerfile infra/Dockerfile.worker
+# A worker has no HTTP port to expose — just a long-running process, so
+# no [http_service] block.
+app = "prommatch-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "infra/Dockerfile.worker"
+
+[[vm]]
+  size = "shared-cpu-1x"
+
+# Secrets: DATABASE_URL, REDIS_URL, EMAIL_HASH_SALT (must match
+# prommatch-web's value), VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY,
+# VAPID_CONTACT_EMAIL, S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY,
+# SMTP_URL, EMAIL_FROM, APP_URL
