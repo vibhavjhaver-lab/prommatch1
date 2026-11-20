@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  DATABASE_URL: postgresql://prommatch:prommatch@localhost:5432/prommatch
+  REDIS_URL: redis://localhost:6379
+  AUTH_SECRET: ci-only-auth-secret-not-for-real-use-00000000
+  REALTIME_JWT_SECRET: ci-only-realtime-secret-not-for-real-use-0000
+  CRON_SECRET: ci-only-cron-secret
+  FIELD_ENCRYPTION_KEY: ci-only-field-encryption-key-0000000000000
+  EMAIL_HASH_SALT: ci-only-email-hash-salt-00000000
+  VAPID_PUBLIC_KEY: ci-placeholder-public-key
+  VAPID_PRIVATE_KEY: ci-placeholder-private-key
+  VAPID_CONTACT_EMAIL: ci@example.com
+  S3_ENDPOINT: http://localhost:9000
+  S3_BUCKET: prommatch-ci
+  S3_ACCESS_KEY: ci
+  S3_SECRET_KEY: ci-secret-key
+  SMTP_URL: smtp://localhost:1025
+  EMAIL_FROM: "CI <ci@example.com>"
+  APP_URL: http://localhost:3000
+  REALTIME_URL: http://localhost:4000
+  REALTIME_PORT: "4000"
+  REALTIME_CORS_ORIGINS: http://localhost:3000
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: prommatch
+          POSTGRES_PASSWORD: prommatch
+          POSTGRES_DB: prommatch
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U prommatch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Run database migrations
+        run: pnpm db:migrate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check
+    # Playwright e2e needs the full stack (web + worker + realtime +
+    # Postgres + Redis + a mail/S3 stand-in) running together, which is
+    # more than a single `services:` block gives you cleanly — wire this
+    # up (likely via infra/docker-compose.yml plus a wait-on step) when
+    # the e2e suite itself is built out past its current smoke-level
+    # coverage (see e2e/, PROGRESS.md). Left as a separate, currently
+    # no-op job rather than deleted, so CI's shape already reflects where
+    # e2e is meant to run.
+    if: false
+    steps:
+      - run: echo "e2e wiring tracked in PROGRESS.md"
