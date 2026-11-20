@@ -1,0 +1,41 @@
+/*
+ * PromMatch "midnight gala" design tokens — spec section 12.
+ * Colours are overridable per-event: the admin console writes overrides
+ * into EventConfig.theme.overrides, and apps/web injects them as inline
+ * `style` custom properties on <html> at request time, after this file's
+ * defaults have loaded — so a college's own palette always wins.
+ */
+
+:root,
+[data-theme="dark"] {
+  --bg: #0b1026;
+  --surface: #141b3a;
+  --text: #f5f1e8;
+  --muted: #a7adc8;
+  --gold: #e8c46a;
+  --rose: #f29cb4;
+  --teal: #6fd6c8;
+  --violet: #a98bff;
+  --danger: #ff6b6b;
+
+  --radius-card: 16px;
+  --radius-pill: 999px;
+  --space-unit: 4px;
+}
+
+[data-theme="light"] {
+  --bg: #fbf8f3;
+  --surface: #ffffff;
+  --text: #1a1b2e;
+  --muted: #5b5f78;
+  --gold: #b8892b;
+  --rose: #c9466e;
+  --teal: #1f8a7e;
+  --violet: #6a4fd1;
+  --danger: #c62828;
+}
+
+:root {
+  --font-heading: "Playfair Display", serif;
+  --font-body: "Inter", sans-serif;
+}
