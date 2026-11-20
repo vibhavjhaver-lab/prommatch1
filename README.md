@@ -9,6 +9,13 @@ once both sides say yes.
 repository was built autonomously, in a sandbox with no network access —
 `pnpm install` has never actually been run against it, and neither has
 any test. PROGRESS.md is the honest account of what that means for you.
+
+**Deployed URL: none yet.** This has not been deployed anywhere —
+deployment is the single remaining step before this is a live site,
+and it's an explicit, ordered checklist in [LAUNCH.md](./LAUNCH.md)
+(sections 1–2), not just "run `render.yaml`." Once deployed, put the
+real URL here.
+
 [DECISIONS.md](./DECISIONS.md) is the append-only log of every place the
 build spec was ambiguous or had to be deviated from, with reasoning.
 
